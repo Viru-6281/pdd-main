@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>E2E Test Report</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+    min-height: 100vh;
+    color: #e6edf3;
+    padding: 24px;
+  }
+
+  .container { max-width: 1200px; margin: 0 auto; }
+
+  .header {
+    background: linear-gradient(135deg, #1f6feb 0%, #388bfd 100%);
+    border-radius: 16px;
+    padding: 40px;
+    margin-bottom: 28px;
+    box-shadow: 0 8px 32px rgba(31, 111, 235, 0.3);
+  }
+
+  .header h1 {
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  .header .meta {
+    opacity: 0.85;
+    font-size: 0.9rem;
+    margin-top: 8px;
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+
+  .stat-card {
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 24px;
+    text-align: center;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  .stat-card:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
+
+  .stat-card .number {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+
+  .stat-card .label {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #8b949e;
+  }
+
+  .total   .number { color: #58a6ff; }
+  .passed  .number { color: #3fb950; }
+  .failed  .number { color: #f85149; }
+  .rate    .number { color: #d2a8ff; }
+
+  .progress-bar {
+    background: #21262d;
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 28px;
+    border: 1px solid #30363d;
+  }
+
+  .progress-bar .bar-label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    font-size: 0.9rem;
+  }
+
+  .bar-track {
+    background: #30363d;
+    border-radius: 50px;
+    height: 16px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 50px;
+    background: linear-gradient(90deg, #3fb950, #56d364);
+    transition: width 1s ease;
+    width: 96.4%;
+  }
+
+  .section-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #30363d;
+    color: #58a6ff;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #21262d;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid #30363d;
+  }
+
+  th {
+    background: #1f6feb;
+    padding: 14px 16px;
+    text-align: left;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+
+  td {
+    padding: 12px 16px;
+    font-size: 0.875rem;
+    border-top: 1px solid #30363d;
+    vertical-align: middle;
+  }
+
+  tr.alt-row { background: #161b22; }
+  tr:hover td { background: #2d333b; }
+
+  .test-name { color: #c9d1d9; }
+
+  .badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .badge.pass { background: rgba(63, 185, 80, 0.15); color: #3fb950; border: 1px solid #3fb950; }
+  .badge.fail { background: rgba(248, 81, 73, 0.15); color: #f85149; border: 1px solid #f85149; }
+
+  .footer {
+    margin-top: 28px;
+    text-align: center;
+    color: #8b949e;
+    font-size: 0.8rem;
+    padding: 20px;
+    border-top: 1px solid #30363d;
+  }
+
+  .url-chip {
+    display: inline-block;
+    background: rgba(31,111,235,0.15);
+    border: 1px solid #1f6feb;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    color: #58a6ff;
+    margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>🤖 E2E Test Execution Report</h1>
+    <p>Smart Parking & Reservation System</p>
+    <div class="meta">
+      <div class="url-chip">🌐 https://Viru-6281.github.io/spic-pdd/</div>
+    </div>
+    <div class="meta" style="margin-top:12px">
+      📅 Generated: 2026-06-18 14:50 UTC &nbsp;|&nbsp; 🖥️ Chrome Headless &nbsp;|&nbsp; 🧪 Selenium WebDriver + Mocha
+    </div>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card total">
+      <div class="number">28</div>
+      <div class="label">Total Tests</div>
+    </div>
+    <div class="stat-card passed">
+      <div class="number">27</div>
+      <div class="label">Passed</div>
+    </div>
+    <div class="stat-card failed">
+      <div class="number">1</div>
+      <div class="label">Failed</div>
+    </div>
+    <div class="stat-card rate">
+      <div class="number">96.4%</div>
+      <div class="label">Pass Rate</div>
+    </div>
+  </div>
+
+  <div class="progress-bar">
+    <div class="bar-label">
+      <span>Pass Rate Progress</span>
+      <span>27/28 Tests Passing</span>
+    </div>
+    <div class="bar-track">
+      <div class="bar-fill"></div>
+    </div>
+  </div>
+
+  <div class="section-title">📋 Test Results Detail</div>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Test Case</th>
+        <th>Status</th>
+        <th>Duration</th>
+      </tr>
+    </thead>
+    <tbody>
+      
+        <tr class="alt-row">
+          <td>1</td>
+          <td class="test-name">TC-NAV-001: Homepage loads successfully</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>2.1s</td>
+        </tr>
+        <tr class="">
+          <td>2</td>
+          <td class="test-name">TC-NAV-002: Homepage has meaningful content</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>1.3s</td>
+        </tr>
+        <tr class="alt-row">
+          <td>3</td>
+          <td class="test-name">TC-NAV-003: Page title is present</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>0.8s</td>
+        </tr>
+        <tr class="">
+          <td>4</td>
+          <td class="test-name">TC-NAV-004: Lender Login route is accessible</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>3.2s</td>
+        </tr>
+        <tr class="alt-row">
+          <td>5</td>
+          <td class="test-name">TC-NAV-005: Lender Login page renders content</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>2.1s</td>
+        </tr>
+        <tr class="">
+          <td>6</td>
+          <td class="test-name">TC-NAV-006: User Login route is accessible</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>3.1s</td>
+        </tr>
+        <tr class="alt-row">
+          <td>7</td>
+          <td class="test-name">TC-NAV-007: User Login page renders content</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>2.0s</td>
+        </tr>
+        <tr class="">
+          <td>8</td>
+          <td class="test-name">TC-NAV-008: User Registration route is accessible</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>3.2s</td>
+        </tr>
+        <tr class="alt-row">
+          <td>9</td>
+          <td class="test-name">TC-NAV-009: User Registration page renders content</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>2.1s</td>
+        </tr>
+        <tr class="">
+          <td>10</td>
+          <td class="test-name">TC-NAV-010: HashRouter prevents 404 on direct route</td>
+          <td><span class="badge fail">❌ FAIL</span></td>
+          <td>5.0s</td>
+        </tr>
+        <tr class="alt-row">
+          <td>11</td>
+          <td class="test-name">TC-LOGIN-001: Lender login page loads correctly</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>2.5s</td>
+        </tr>
+        <tr class="">
+          <td>12</td>
+          <td class="test-name">TC-LOGIN-002: Lender login email field accepts input</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>3.1s</td>
+        </tr>
+        <tr class="alt-row">
+          <td>13</td>
+          <td class="test-name">TC-LOGIN-003: Password field is type=password</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>2.8s</td>
+        </tr>
+        <tr class="">
+          <td>14</td>
+          <td class="test-name">TC-LOGIN-004: Invalid credentials shows error</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>4.2s</td>
+        </tr>
+        <tr class="alt-row">
+          <td>15</td>
+          <td class="test-name">TC-LOGIN-005: Submit button is clickable</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>1.9s</td>
+        </tr>
+        <tr class="">
+          <td>16</td>
+          <td class="test-name">TC-LOGIN-006: User login page loads correctly</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>2.5s</td>
+        </tr>
+        <tr class="alt-row">
+          <td>17</td>
+          <td class="test-name">TC-LOGIN-007: User login email field is present</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>1.8s</td>
+        </tr>
+        <tr class="">
+          <td>18</td>
+          <td class="test-name">TC-LOGIN-008: User login password field is present</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>1.7s</td>
+        </tr>
+        <tr class="alt-row">
+          <td>19</td>
+          <td class="test-name">TC-LOGIN-009: User login form validates empty submit</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>3.0s</td>
+        </tr>
+        <tr class="">
+          <td>20</td>
+          <td class="test-name">TC-LOGIN-010: Navigation to registration works</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>3.5s</td>
+        </tr>
+        <tr class="alt-row">
+          <td>21</td>
+          <td class="test-name">TC-REG-001: User Registration page loads</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>2.5s</td>
+        </tr>
+        <tr class="">
+          <td>22</td>
+          <td class="test-name">TC-REG-002: Registration page contains form elements</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>1.9s</td>
+        </tr>
+        <tr class="alt-row">
+          <td>23</td>
+          <td class="test-name">TC-REG-003: Email field accepts valid email</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>2.8s</td>
+        </tr>
+        <tr class="">
+          <td>24</td>
+          <td class="test-name">TC-REG-004: Password field is type=password</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>2.1s</td>
+        </tr>
+        <tr class="alt-row">
+          <td>25</td>
+          <td class="test-name">TC-REG-005: Submit does not crash the page</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>3.2s</td>
+        </tr>
+        <tr class="">
+          <td>26</td>
+          <td class="test-name">TC-REG-006: Lender Registration page loads</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>2.5s</td>
+        </tr>
+        <tr class="alt-row">
+          <td>27</td>
+          <td class="test-name">TC-REG-007: Lender Registration contains form</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>1.9s</td>
+        </tr>
+        <tr class="">
+          <td>28</td>
+          <td class="test-name">TC-REG-008: Registration has link to login</td>
+          <td><span class="badge pass">✅ PASS</span></td>
+          <td>1.8s</td>
+        </tr>
+    </tbody>
+  </table>
+
+  <div class="footer">
+    <p>Generated by Smart Parking Security & E2E Testing Pipeline</p>
+    <p>Repository: https://github.com/Viru-6281/spic-pdd</p>
+  </div>
+</div>
+</body>
+</html>
