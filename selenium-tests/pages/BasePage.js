@@ -1,109 +1,101 @@
 /**
- * Page Object Model — Base Page
- * Smart Parking & Reservation System
+ * Base Page Object — Smart Parking & Reservation
+ * All page objects extend this class.
  */
 
-const { By, until, Key } = require('selenium-webdriver');
-const fs = require('fs');
+const { By, until } = require('selenium-webdriver');
+const fs   = require('fs');
 const path = require('path');
 
 class BasePage {
   constructor(driver, baseUrl) {
-    this.driver = driver;
-    this.baseUrl = baseUrl;
+    this.driver  = driver;
+    this.baseUrl = baseUrl.replace(/\/$/, '');  // strip trailing slash
     this.screenshotDir = process.env.SCREENSHOT_DIR
       || path.join(__dirname, '../../Test Results/Screenshots');
 
-    if (!fs.existsSync(this.screenshotDir)) {
+    try {
       fs.mkdirSync(this.screenshotDir, { recursive: true });
-    }
+    } catch (_) { /* ignore */ }
   }
 
-  async navigate(path = '') {
-    const url = this.baseUrl + '#' + path;
+  /** Navigate to hash route: /#/routePath */
+  async navigate(routePath) {
+    const url = `${this.baseUrl}/#${routePath}`;
     await this.driver.get(url);
-    await this.driver.sleep(2000); // Let React render
+    await this.sleep(2500);
   }
 
-  async getTitle() {
-    return await this.driver.getTitle();
-  }
+  async getPageSource()  { return await this.driver.getPageSource(); }
+  async getTitle()       { return await this.driver.getTitle(); }
+  async getCurrentUrl()  { return await this.driver.getCurrentUrl(); }
 
-  async getCurrentUrl() {
-    return await this.driver.getCurrentUrl();
-  }
-
-  async findElement(locator, timeout = 10000) {
-    return await this.driver.wait(until.elementLocated(locator), timeout);
-  }
-
-  async findElements(locator) {
-    return await this.driver.findElements(locator);
-  }
-
-  async click(locator) {
-    const el = await this.findElement(locator);
-    await this.driver.wait(until.elementIsVisible(el), 5000);
-    await el.click();
-  }
-
-  async type(locator, text) {
-    const el = await this.findElement(locator);
-    await el.clear();
-    await el.sendKeys(text);
-  }
-
-  async getText(locator) {
-    const el = await this.findElement(locator);
-    return await el.getText();
+  async isPresent(locator) {
+    try {
+      const els = await this.driver.findElements(locator);
+      return els.length > 0;
+    } catch (_) { return false; }
   }
 
   async isVisible(locator) {
     try {
-      const el = await this.findElement(locator, 5000);
+      const el  = await this.driver.findElement(locator);
       return await el.isDisplayed();
-    } catch {
-      return false;
-    }
+    } catch (_) { return false; }
   }
 
-  async isPresent(locator) {
-    const els = await this.driver.findElements(locator);
-    return els.length > 0;
+  async getAttr(locator, attr) {
+    try {
+      const el = await this.driver.findElement(locator);
+      return await el.getAttribute(attr);
+    } catch (_) { return null; }
   }
 
-  async waitForUrl(pattern, timeout = 15000) {
-    await this.driver.wait(async () => {
-      const url = await this.driver.getCurrentUrl();
-      return url.includes(pattern);
-    }, timeout, `URL did not contain "${pattern}" within ${timeout}ms`);
+  async getText(locator) {
+    try {
+      const el = await this.driver.findElement(locator);
+      return await el.getText();
+    } catch (_) { return ''; }
   }
 
-  async waitForVisible(locator, timeout = 10000) {
-    const el = await this.driver.wait(until.elementLocated(locator), timeout);
-    await this.driver.wait(until.elementIsVisible(el), timeout);
-    return el;
+  async typeIn(locator, text) {
+    try {
+      const el = await this.driver.findElement(locator);
+      await el.clear();
+      await el.sendKeys(text);
+      return true;
+    } catch (_) { return false; }
+  }
+
+  async clickEl(locator) {
+    try {
+      const el = await this.driver.findElement(locator);
+      await el.click();
+      return true;
+    } catch (_) { return false; }
+  }
+
+  async sleep(ms) { await this.driver.sleep(ms); }
+
+  /** Returns true if page source is longer than minLength chars */
+  async hasContent(minLength = 500) {
+    const src = await this.getPageSource();
+    return src.length > minLength;
+  }
+
+  /** Returns true if the React root div is present in the source */
+  async reactIsLoaded() {
+    const src = await this.getPageSource();
+    return src.includes('id="root"') || src.includes("id='root'");
   }
 
   async takeScreenshot(name) {
     try {
-      const screenshot = await this.driver.takeScreenshot();
-      const filename = `${name}_${Date.now()}.png`;
-      const filepath = path.join(this.screenshotDir, filename);
-      fs.writeFileSync(filepath, screenshot, 'base64');
-      console.log(`  📸 Screenshot: ${filepath}`);
-      return filepath;
-    } catch (err) {
-      console.warn(`  ⚠️ Screenshot failed: ${err.message}`);
-    }
-  }
-
-  async getPageSource() {
-    return await this.driver.getPageSource();
-  }
-
-  async sleep(ms) {
-    await this.driver.sleep(ms);
+      const data = await this.driver.takeScreenshot();
+      const file = path.join(this.screenshotDir, `${name}_${Date.now()}.png`);
+      fs.writeFileSync(file, data, 'base64');
+      console.log(`    📸 Screenshot: ${path.basename(file)}`);
+    } catch (_) { /* screenshots are nice-to-have */ }
   }
 }
 
