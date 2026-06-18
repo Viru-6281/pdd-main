@@ -1,542 +1,390 @@
 #!/usr/bin/env python3
 """
-Generate Security Report — Excel Workbook
-Produces: Vulnerability Test Results/findings.xlsx
-          Vulnerability Test Results/endpoint-inventory.xlsx
-
-Requirements: pip install openpyxl
+generate_security_report.py
+Generates Security_Assessment_Report.xlsx from the 17 known findings.
+Called by security-review.yml after SAST/DAST scans.
 """
 
-import os
-from datetime import datetime
-from openpyxl import Workbook
-from openpyxl.styles import (
-    PatternFill, Font, Alignment, Border, Side
-)
-from openpyxl.utils import get_column_letter
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
-OUTPUT_DIR = "Vulnerability Test Results"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+try:
+    import openpyxl
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.chart import BarChart, Reference
+    from openpyxl.utils import get_column_letter
+except ImportError:
+    print("ERROR: openpyxl not installed — run: pip install openpyxl")
+    sys.exit(1)
 
-# ──────────────────────────────────────────────
-# Color palette
-# ──────────────────────────────────────────────
-CRITICAL_COLOR = "C62828"
-HIGH_COLOR = "E65100"
-MEDIUM_COLOR = "F9A825"
-LOW_COLOR = "558B2F"
-INFO_COLOR = "1565C0"
-HEADER_COLOR = "1A237E"
-ALT_ROW_COLOR = "E8EAF6"
-WHITE = "FFFFFF"
+# ── Paths ────────────────────────────────────────────────────────────
+ROOT       = Path(__file__).resolve().parent.parent
+OUT_DIR    = ROOT / "Vulnerability Test Results"
+EXCEL_OUT  = OUT_DIR / "Security_Assessment_Report.xlsx"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+RUN_DATE   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-def header_fill(hex_color):
-    return PatternFill("solid", fgColor=hex_color)
+# ── Colour palette ───────────────────────────────────────────────────
+C = {
+    "critical": "C0392B",  "critical_bg": "FADBD8",
+    "high":     "E67E22",  "high_bg":     "FDEBD0",
+    "medium":   "F1C40F",  "medium_bg":   "FEF9E7",
+    "low":      "27AE60",  "low_bg":      "D5F5E3",
+    "header":   "1B2631",  "title":       "0D47A1",
+    "row_alt":  "EBF5FB",  "row_white":   "FFFFFF",
+    "summary":  "E8EAF6",
+}
 
-def severity_fill(severity: str):
-    mapping = {
-        "CRITICAL": CRITICAL_COLOR,
-        "HIGH": HIGH_COLOR,
-        "MEDIUM": MEDIUM_COLOR,
-        "LOW": LOW_COLOR,
-    }
-    return PatternFill("solid", fgColor=mapping.get(severity.upper(), "CCCCCC"))
+SEV_COLOR = {
+    "CRITICAL": (C["critical"], C["critical_bg"]),
+    "HIGH":     (C["high"],     C["high_bg"]),
+    "MEDIUM":   (C["medium"],   C["medium_bg"]),
+    "LOW":      (C["low"],      C["low_bg"]),
+}
 
-def thin_border():
-    side = Side(style="thin", color="B0BEC5")
-    return Border(left=side, right=side, top=side, bottom=side)
+def fill(h):  return PatternFill("solid", fgColor=h)
+def bold(s=10, color="000000"):  return Font(bold=True, size=s, color=color)
+def center(): return Alignment(horizontal="center", vertical="center", wrap_text=True)
+def left():   return Alignment(horizontal="left",   vertical="center", wrap_text=True)
+def border():
+    sd = Side(border_style="thin", color="CCCCCC")
+    return Border(left=sd, right=sd, top=sd, bottom=sd)
+def rh(ws, r, h): ws.row_dimensions[r].height = h
+def cw(ws, c, w): ws.column_dimensions[c].width = w
 
-def bold_white(size=11):
-    return Font(name="Calibri", bold=True, color=WHITE, size=size)
-
-def normal_font(size=10, bold=False, color="000000"):
-    return Font(name="Calibri", bold=bold, size=size, color=color)
-
-def center_align():
-    return Alignment(horizontal="center", vertical="center", wrap_text=True)
-
-def left_align():
-    return Alignment(horizontal="left", vertical="top", wrap_text=True)
-
-def set_col_widths(ws, widths: dict):
-    for col_letter, width in widths.items():
-        ws.column_dimensions[col_letter].width = width
-
-
-# ──────────────────────────────────────────────
-# Data
-# ──────────────────────────────────────────────
+# ── All 17 Findings ──────────────────────────────────────────────────
 FINDINGS = [
-    {
-        "id": "FINDING-001",
-        "severity": "CRITICAL",
-        "type": "Missing Authentication",
-        "file": "All Controllers",
-        "endpoint": "All API endpoints",
-        "description": "No Spring Security filter chain configured. Every API endpoint is publicly accessible without any credentials.",
-        "exploitation": "curl http://localhost:8080/user — returns all users. curl -X DELETE http://localhost:8080/user/delete/1 — deletes any user.",
-        "impact": "Full account takeover, data breach of all PII, deletion of any record.",
-        "fix": "Add spring-boot-starter-security + JWT. Create SecurityFilterChain protecting all routes. Issue JWT on login.",
-        "cvss": "10.0",
-    },
-    {
-        "id": "FINDING-002",
-        "severity": "CRITICAL",
-        "type": "Dangerous CORS (Wildcard)",
-        "file": "All Controllers",
-        "endpoint": "All API endpoints",
-        "description": "@CrossOrigin(\"*\") on every controller allows any website to make cross-origin requests.",
-        "exploitation": "Malicious page fetches http://api/user from any origin, exfiltrating all user data.",
-        "impact": "Cross-site data exfiltration, CSRF attacks, full API access from any domain.",
-        "fix": "Replace @CrossOrigin(\"*\") with specific origins. Configure CorsConfigurationSource globally.",
-        "cvss": "9.1",
-    },
-    {
-        "id": "FINDING-003",
-        "severity": "CRITICAL",
-        "type": "IDOR (Insecure Direct Object Reference)",
-        "file": "All Controllers",
-        "endpoint": "All endpoints with {id} path variables",
-        "description": "No ownership verification on any resource endpoint. Any caller can read/modify/delete any other user's data by changing the ID.",
-        "exploitation": "curl http://localhost:8080/user/1 — any user reads any other user's profile. DELETE /user/delete/5 from any session.",
-        "impact": "Full horizontal and vertical privilege escalation. All user data accessible to anonymous requests.",
-        "fix": "Extract authenticated user ID from JWT. Verify resource ownership before each operation. Return 403 on mismatch.",
-        "cvss": "9.8",
-    },
-    {
-        "id": "FINDING-004",
-        "severity": "HIGH",
-        "type": "Hardcoded Credentials",
-        "file": "server/src/main/resources/application.properties",
-        "endpoint": "N/A",
-        "description": "MySQL root account with empty password hardcoded and committed to repository.",
-        "exploitation": "Anyone with repo access connects directly: mysql -u root -h server-ip smartparking",
-        "impact": "Full database compromise, potential OS escalation via MySQL FILE privilege.",
-        "fix": "Use environment variables for DB credentials. Create least-privilege DB user. Add to .gitignore.",
-        "cvss": "8.8",
-    },
-    {
-        "id": "FINDING-005",
-        "severity": "HIGH",
-        "type": "Unsafe File Upload / Path Traversal",
-        "file": "ParkingPlaceController.java, VehicleController.java",
-        "endpoint": "POST /parking/{lenderId}, POST /vehicle/{userId}",
-        "description": "Raw original filename from client used to construct server file path without sanitization. Any file type accepted.",
-        "exploitation": "Upload file named ../../application.properties to overwrite config. Upload shell.jsp for RCE.",
-        "impact": "Remote Code Execution, file system compromise, configuration overwrite.",
-        "fix": "Use UUID filenames. Validate MIME type and extension. Store outside web root. Apply UserService.saveImage() pattern.",
-        "cvss": "8.6",
-    },
-    {
-        "id": "FINDING-006",
-        "severity": "HIGH",
-        "type": "SQL/Plaintext Password Comparison Risk",
-        "file": "UserService.java, LenderService.java",
-        "endpoint": "N/A (service layer)",
-        "description": "findByEmailAndPassword() methods exist that compare plaintext passwords in DB queries, bypassing BCrypt.",
-        "exploitation": "If these code paths are ever called, plaintext password is sent directly to DB comparison, enabling SQL injection.",
-        "impact": "Authentication bypass, SQL injection risk, security model breakdown.",
-        "fix": "Remove findByEmailAndPassword methods. Always authenticate via findByEmail() + passwordEncoder.matches().",
-        "cvss": "7.5",
-    },
-    {
-        "id": "FINDING-007",
-        "severity": "HIGH",
-        "type": "Password/PII Exposure in Responses",
-        "file": "UserController.java, LenderController.java",
-        "endpoint": "GET /user, GET /user/{id}, GET /lender, GET /lender/{id}",
-        "description": "GET endpoints return full entity including BCrypt-hashed password, email, mobile, and address of all users.",
-        "exploitation": "curl http://localhost:8080/user — returns all hashed passwords. Run hashcat -m 3200 to crack them offline.",
-        "impact": "PII breach, offline password cracking, GDPR/PCI-DSS violations.",
-        "fix": "Add @JsonProperty(access=WRITE_ONLY) to password field. Use DTO projections for list responses.",
-        "cvss": "7.5",
-    },
-    {
-        "id": "FINDING-008",
-        "severity": "HIGH",
-        "type": "No Rate Limiting / Brute-Force Protection",
-        "file": "AuthenticationController.java",
-        "endpoint": "POST /login/user, POST /login/lender",
-        "description": "Login endpoints have no rate limiting, account lockout, or CAPTCHA. Unlimited password attempts allowed.",
-        "exploitation": "Python script sends 10000 login requests with password wordlist. No throttling applied.",
-        "impact": "Account brute-force, credential stuffing attacks, account takeover.",
-        "fix": "Implement Bucket4j rate limiting. Add exponential backoff. Lock accounts after N failures.",
-        "cvss": "7.3",
-    },
-    {
-        "id": "FINDING-009",
-        "severity": "MEDIUM",
-        "type": "SQL Query Logging in Production",
-        "file": "server/src/main/resources/application.properties",
-        "endpoint": "N/A",
-        "description": "spring.jpa.show-sql=true logs all SQL queries including parameters to stdout/production logs.",
-        "exploitation": "Log access reveals user emails, query structure, and application internals.",
-        "impact": "PII leakage in logs, security model exposure.",
-        "fix": "Set spring.jpa.show-sql=false in production. Use separate dev profile for SQL debugging.",
-        "cvss": "5.3",
-    },
-    {
-        "id": "FINDING-010",
-        "severity": "MEDIUM",
-        "type": "Client-Controlled Booking Status",
-        "file": "BookingController.java",
-        "endpoint": "POST /booking/update/status/{bookingId}",
-        "description": "Booking status accepted as free-text string from client. Any value accepted with no validation or workflow enforcement.",
-        "exploitation": "curl -X POST '/booking/update/status/5?status=Confirmed' — skips payment approval flow.",
-        "impact": "Financial fraud, booking manipulation, workflow bypass.",
-        "fix": "Define BookingStatus enum. Validate transitions server-side. Add authorization checks.",
-        "cvss": "6.5",
-    },
-    {
-        "id": "FINDING-011",
-        "severity": "MEDIUM",
-        "type": "Vulnerable Dependency (Apache Velocity 1.7)",
-        "file": "server/pom.xml",
-        "endpoint": "N/A",
-        "description": "Apache Velocity 1.7 (2010, EOL) with CVE-2020-13936 (CVSS 9.8) — Server-Side Template Injection allowing RCE.",
-        "exploitation": "If user input reaches a Velocity template, attacker escapes sandbox and executes arbitrary Java.",
-        "impact": "Remote Code Execution on the server.",
-        "fix": "Replace with velocity-engine-core:2.3+ or migrate to Thymeleaf.",
-        "cvss": "9.8 (CVE)",
-    },
-    {
-        "id": "FINDING-012",
-        "severity": "MEDIUM",
-        "type": "Missing Security Headers",
-        "file": "Application-wide (no SecurityFilterChain)",
-        "endpoint": "All responses",
-        "description": "No X-Content-Type-Options, X-Frame-Options, CSP, HSTS, or Referrer-Policy headers present.",
-        "exploitation": "Enables clickjacking, MIME sniffing, and cross-site script injection.",
-        "impact": "Clickjacking, XSS amplification, data leakage.",
-        "fix": "Add Spring Security. Configure security headers via http.headers() configuration.",
-        "cvss": "4.3",
-    },
-    {
-        "id": "FINDING-013",
-        "severity": "MEDIUM",
-        "type": "Excessive File Upload Size (DoS)",
-        "file": "server/src/main/resources/application.properties",
-        "endpoint": "POST /parking/{lenderId}, POST /vehicle/{userId}",
-        "description": "max-file-size=100MB allows anonymous DoS attacks by uploading large files repeatedly.",
-        "exploitation": "Loop uploading 100MB files fills disk, crashes server out of memory.",
-        "impact": "Denial of Service, disk exhaustion.",
-        "fix": "Reduce to max-file-size=5MB. Add authentication to upload endpoints.",
-        "cvss": "5.0",
-    },
-    {
-        "id": "FINDING-014",
-        "severity": "LOW",
-        "type": "Stack Trace Logging (e.printStackTrace())",
-        "file": "AuthenticationController.java, BookingController.java",
-        "endpoint": "Multiple",
-        "description": "e.printStackTrace() dumps full stack traces to stdout, revealing implementation details.",
-        "exploitation": "Log access reveals class names, library versions, DB query structure.",
-        "impact": "Information leakage, aids targeted attacks.",
-        "fix": "Use SLF4J Logger with log.error(\"message\", e) instead of e.printStackTrace().",
-        "cvss": "3.1",
-    },
-    {
-        "id": "FINDING-015",
-        "severity": "LOW",
-        "type": "Missing Input Validation on User Signup",
-        "file": "UserController.java",
-        "endpoint": "POST /user/signup",
-        "description": "No @Valid annotation and no validation constraints on the User entity — accepts empty names, invalid emails, weak passwords.",
-        "exploitation": "Register with email='x', password='1', name='' — bypasses any front-end validation.",
-        "impact": "Data integrity issues, security control bypass.",
-        "fix": "Add @Valid to @RequestBody. Add @NotBlank, @Email, @Size(min=8) to User entity or registration DTO.",
-        "cvss": "4.0",
-    },
-    {
-        "id": "FINDING-016",
-        "severity": "LOW",
-        "type": "No Pagination on List Endpoints",
-        "file": "UserController.java, LenderController.java, BookingController.java",
-        "endpoint": "GET /user, GET /lender, GET /booking/all, GET /rating/all",
-        "description": "List endpoints return all records with no pagination, causing memory exhaustion and full data exposure.",
-        "exploitation": "curl /user returns entire user database in one response.",
-        "impact": "DoS via memory exhaustion, excessive data exposure.",
-        "fix": "Add Pageable parameter to all list endpoints and JPA repository methods.",
-        "cvss": "3.7",
-    },
-    {
-        "id": "FINDING-017",
-        "severity": "LOW",
-        "type": "Insecure Client-Side Storage (localStorage)",
-        "file": "client/src (login components)",
-        "endpoint": "N/A (frontend)",
-        "description": "Full user object including PII stored in localStorage, accessible to any JavaScript (XSS risk).",
-        "exploitation": "If XSS exists: document.localStorage.getItem('user') exfiltrates all stored PII.",
-        "impact": "Session hijacking, PII exposure via XSS.",
-        "fix": "Store only JWT token. Use httpOnly cookies for sensitive tokens. Never store PII in localStorage.",
-        "cvss": "4.3",
-    },
+    # id, severity, type, file_path, endpoint, cvss, description_short, fix_short
+    (1,  "CRITICAL", "Missing Authentication",
+     "All Controllers",
+     "ALL 33 endpoints",
+     "10.0",
+     "Zero auth middleware. Every API is publicly accessible without credentials.",
+     "Add Spring Security + JWT. Protect all non-public endpoints."),
+    (2,  "CRITICAL", "Wildcard CORS",
+     "All Controllers (@CrossOrigin(\"*\"))",
+     "ALL endpoints",
+     "9.1",
+     "@CrossOrigin(\"*\") on every controller allows any origin to access the API.",
+     "Restrict CORS to specific production domain in global CorsConfigurationSource bean."),
+    (3,  "CRITICAL", "IDOR — No Ownership Check",
+     "BookingController, UserController, VehicleController",
+     "/booking/{id}, /user/{id}, /vehicle/{userId}",
+     "9.8",
+     "No ownership verification on any resource endpoint. Any user can access any other user's data.",
+     "Extract userId from JWT principal and verify ownership before returning resources."),
+    (4,  "HIGH", "Hardcoded DB Credentials",
+     "server/src/main/resources/application.properties:5-6",
+     "N/A",
+     "8.8",
+     "root account with empty password committed to repository.",
+     "Move DB credentials to environment variables. Create least-privilege MySQL user."),
+    (5,  "HIGH", "Unsafe File Upload — Path Traversal",
+     "ParkingPlaceController.java:56-58, VehicleController.java",
+     "POST /parking/{lenderId}, POST /vehicle/{userId}",
+     "8.6",
+     "getOriginalFilename() used directly in file path construction — path traversal / RCE risk.",
+     "UUID-based filenames, MIME type whitelist, extension whitelist, max 5MB, path canonicalization."),
+    (6,  "HIGH", "Plaintext Password Comparison Risk",
+     "UserService.java, LenderService.java",
+     "POST /login/user, POST /login/lender",
+     "7.5",
+     "findByEmailAndPassword() methods exist bypassing BCrypt verification.",
+     "Remove all findByEmailAndPassword(). Always use findByEmail() + passwordEncoder.matches()."),
+    (7,  "HIGH", "Password/PII Exposed in Responses",
+     "UserController.java (GET /user, GET /user/{id})",
+     "GET /user, GET /user/{id}",
+     "7.5",
+     "BCrypt hashed passwords, emails, mobile numbers returned in GET /user list.",
+     "Add @JsonProperty(access=WRITE_ONLY) on password field. Use response DTOs."),
+    (8,  "HIGH", "No Rate Limiting",
+     "AuthenticationController.java",
+     "POST /login/user, POST /login/lender",
+     "7.3",
+     "Login endpoints accept unlimited requests — enables brute-force and credential stuffing.",
+     "Add Bucket4j rate limiting filter — 10 requests/minute per IP."),
+    (9,  "MEDIUM", "SQL Logging in Production",
+     "server/src/main/resources/application.properties:11",
+     "N/A",
+     "5.3",
+     "spring.jpa.show-sql=true leaks SQL queries including bind parameters to logs.",
+     "Set show-sql=false in production. Enable only in dev profile."),
+    (10, "MEDIUM", "Client-Controlled Booking Status",
+     "BookingController.java:134-145",
+     "POST /booking/update/status/{bookingId}",
+     "6.5",
+     "Free-text status string accepted with no enum validation. Business logic bypass possible.",
+     "Use BookingStatus enum type on @RequestParam — Spring validates automatically."),
+    (11, "MEDIUM", "Apache Velocity 1.7 — CVE-2020-13936",
+     "server/pom.xml",
+     "N/A",
+     "9.8 (CVE)",
+     "EOL library with Server-Side Template Injection vulnerability allowing RCE.",
+     "Upgrade to velocity-engine-core 2.3."),
+    (12, "MEDIUM", "Missing Security Headers",
+     "Application-wide",
+     "ALL responses",
+     "4.3",
+     "No X-Content-Type-Options, X-Frame-Options, CSP, HSTS, or Referrer-Policy headers.",
+     "Configure security headers via Spring Security http.headers() configuration."),
+    (13, "MEDIUM", "Excessive File Upload Size",
+     "server/src/main/resources/application.properties:16-18",
+     "POST /parking/{lenderId}",
+     "5.0",
+     "100MB file upload limit with no auth = anonymous DoS vector.",
+     "Reduce to 5MB. Require authentication before allowing uploads."),
+    (14, "LOW", "Stack Trace Leakage",
+     "Multiple Controllers (e.printStackTrace())",
+     "All error paths",
+     "3.1",
+     "e.printStackTrace() dumps full Java stack traces to stdout in all catch blocks.",
+     "Replace with SLF4J Logger: log.error(\"Error\", e)"),
+    (15, "LOW", "Missing Input Validation on Signup",
+     "UserController.java:25, LenderController.java",
+     "POST /user/signup, POST /lender/signup",
+     "4.0",
+     "@Valid missing from @RequestBody. No @NotBlank, @Email, @Size constraints enforced.",
+     "Add @Valid to @RequestBody. Add Jakarta validation annotations to DTOs."),
+    (16, "LOW", "No Pagination on List Endpoints",
+     "UserController, BookingController, RatingController",
+     "GET /user, GET /booking/all, GET /rating/all",
+     "3.7",
+     "Full dataset returned with no pagination — memory exhaustion and data over-exposure.",
+     "Add Pageable parameter. Return Page<T> with default page size 20."),
+    (17, "LOW", "PII in localStorage",
+     "client/src (login components)",
+     "N/A — Frontend",
+     "4.3",
+     "Full user object stored in localStorage — readable by any XSS payload.",
+     "Store only JWT token. Use httpOnly cookies for sensitive session data."),
 ]
 
 ENDPOINTS = [
-    ("POST", "/login/user", "No", "Public", "AuthenticationController.java"),
-    ("POST", "/login/lender", "No", "Public", "AuthenticationController.java"),
-    ("POST", "/user/signup", "No", "Public", "UserController.java"),
-    ("GET", "/user", "No (should be Yes)", "Admin", "UserController.java"),
-    ("GET", "/user/{id}", "No (should be Yes)", "Admin/Self", "UserController.java"),
-    ("PUT", "/user/{userId}", "No (should be Yes)", "Self", "UserController.java"),
-    ("DELETE", "/user/delete/{id}", "No (should be Yes)", "Admin", "UserController.java"),
-    ("POST", "/lender/signup", "No", "Public", "LenderController.java"),
-    ("GET", "/lender", "No (should be Yes)", "Admin", "LenderController.java"),
-    ("GET", "/lender/{id}", "No (should be Yes)", "Admin/Self", "LenderController.java"),
-    ("PUT", "/lender/update/{lenderId}", "No (should be Yes)", "Self", "LenderController.java"),
-    ("DELETE", "/lender/delete/{id}", "No (should be Yes)", "Admin", "LenderController.java"),
-    ("POST", "/parking/{lenderId}", "No (should be Yes)", "Lender", "ParkingPlaceController.java"),
-    ("GET", "/parking", "No", "Public", "ParkingPlaceController.java"),
-    ("GET", "/parking/place/{lenderId}", "No", "Public", "ParkingPlaceController.java"),
-    ("GET", "/parking/area/{areaName}", "No", "Public", "ParkingPlaceController.java"),
-    ("DELETE", "/parking/delete/{id}", "No (should be Yes)", "Admin/Lender", "ParkingPlaceController.java"),
-    ("POST", "/booking/parking/{lenderId}/book", "No (should be Yes)", "User", "BookingController.java"),
-    ("POST", "/booking/release/{bookingId}", "No (should be Yes)", "Self/Admin", "BookingController.java"),
-    ("POST", "/booking/update/status/{bookingId}", "No (should be Yes)", "Admin", "BookingController.java"),
-    ("GET", "/booking/user/{userId}", "No (should be Yes)", "Self", "BookingController.java"),
-    ("GET", "/booking/all", "No (should be Yes)", "Admin", "BookingController.java"),
-    ("DELETE", "/booking/{id}", "No (should be Yes)", "Admin", "BookingController.java"),
-    ("GET", "/booking/lender/{lenderId}", "No (should be Yes)", "Lender/Admin", "BookingController.java"),
-    ("GET", "/booking/{id}", "No (should be Yes)", "Self/Admin", "BookingController.java"),
-    ("POST", "/vehicle/{userId}", "No (should be Yes)", "Self", "VehicleController.java"),
-    ("GET", "/vehicle/{userId}", "No (should be Yes)", "Self", "VehicleController.java"),
-    ("DELETE", "/vehicle/delete/{id}", "No (should be Yes)", "Self", "VehicleController.java"),
-    ("POST", "/rating/add", "No (should be Yes)", "User", "RatingController.java"),
-    ("GET", "/rating/all", "No", "Public", "RatingController.java"),
-    ("GET", "/rating/parking/{lenderId}", "No", "Public", "RatingController.java"),
-    ("GET", "/rating/user/{userId}", "No", "Public", "RatingController.java"),
-    ("DELETE", "/rating/{id}", "No (should be Yes)", "Admin/Self", "RatingController.java"),
+    ("POST", "/login/user",                     False, "Public",       "AuthenticationController"),
+    ("POST", "/login/lender",                   False, "Public",       "AuthenticationController"),
+    ("POST", "/user/signup",                    False, "Public",       "UserController"),
+    ("GET",  "/user",                           False, "Admin",        "UserController"),
+    ("GET",  "/user/{id}",                      False, "Admin/Self",   "UserController"),
+    ("PUT",  "/user/{userId}",                  False, "Self",         "UserController"),
+    ("DELETE","/user/delete/{id}",              False, "Admin",        "UserController"),
+    ("POST", "/lender/signup",                  False, "Public",       "LenderController"),
+    ("GET",  "/lender",                         False, "Admin",        "LenderController"),
+    ("GET",  "/lender/{id}",                    False, "Admin/Self",   "LenderController"),
+    ("PUT",  "/lender/update/{lenderId}",       False, "Self",         "LenderController"),
+    ("DELETE","/lender/delete/{id}",            False, "Admin",        "LenderController"),
+    ("POST", "/parking/{lenderId}",             False, "Lender",       "ParkingPlaceController"),
+    ("GET",  "/parking",                        False, "Public",       "ParkingPlaceController"),
+    ("GET",  "/parking/place/{lenderId}",       False, "Public",       "ParkingPlaceController"),
+    ("GET",  "/parking/area/{areaName}",        False, "Public",       "ParkingPlaceController"),
+    ("DELETE","/parking/delete/{id}",           False, "Admin/Lender", "ParkingPlaceController"),
+    ("POST", "/booking/parking/{lid}/book",     False, "User",         "BookingController"),
+    ("POST", "/booking/release/{bookingId}",    False, "Self/Admin",   "BookingController"),
+    ("POST", "/booking/update/status/{id}",     False, "Admin",        "BookingController"),
+    ("GET",  "/booking/user/{userId}",          False, "Self",         "BookingController"),
+    ("GET",  "/booking/all",                    False, "Admin",        "BookingController"),
+    ("DELETE","/booking/{id}",                  False, "Admin",        "BookingController"),
+    ("GET",  "/booking/lender/{lenderId}",      False, "Lender/Admin", "BookingController"),
+    ("GET",  "/booking/{id}",                   False, "Self/Admin",   "BookingController"),
+    ("POST", "/vehicle/{userId}",               False, "Self",         "VehicleController"),
+    ("GET",  "/vehicle/{userId}",               False, "Self",         "VehicleController"),
+    ("DELETE","/vehicle/delete/{id}",           False, "Self",         "VehicleController"),
+    ("POST", "/rating/add",                     False, "User",         "RatingController"),
+    ("GET",  "/rating/all",                     False, "Public",       "RatingController"),
+    ("GET",  "/rating/parking/{lenderId}",      False, "Public",       "RatingController"),
+    ("GET",  "/rating/user/{userId}",           False, "Public",       "RatingController"),
+    ("DELETE","/rating/{id}",                   False, "Admin/Self",   "RatingController"),
 ]
 
-DEPENDENCIES = [
-    ("Apache Velocity", "org.apache.velocity:velocity", "1.7", "CRITICAL", "CVE-2020-13936 (CVSS 9.8) — SSTI/RCE", "Replace with velocity-engine-core:2.3+"),
-    ("Spring Boot", "spring-boot-starter-parent", "3.3.4", "LOW", "None known", "Monitor for 3.4.x"),
-    ("Spring Security Crypto", "spring-security-crypto", "6.3.3", "LOW", "None", "Current"),
-    ("MySQL Connector", "mysql-connector-j", "managed", "LOW", "None known", "Verify latest"),
-    ("Lombok", "lombok", "1.18.38", "LOW", "None", "Current"),
-    ("React", "react", "18.3.1", "LOW", "None", "Current"),
-    ("React Router DOM", "react-router-dom", "6.26.2", "LOW", "None", "Current"),
-    ("Axios", "axios", "1.7.7 / 1.18.0", "LOW", "None", "Current"),
-    ("Vite", "vite", "5.4.8", "MEDIUM", "None critical; Vite 6.x available", "Upgrade to 6.x"),
-    ("React (mobile)", "react", "19.2.3", "MEDIUM", "React 19 still stabilizing", "Monitor for stable release"),
-    ("TailwindCSS", "tailwindcss", "3.4.13", "LOW", "None", "Current"),
+DEPS = [
+    ("Apache Velocity", "1.7",   "Java", "CRITICAL", "CVE-2020-13936", "9.8",  "SSTI/RCE — Upgrade to 2.3"),
+    ("Vite",            "5.4.8", "npm",  "LOW",      "None",           "—",    "Upgrade to 6.x recommended"),
+    ("Spring Boot",     "3.3.4", "Java", "NONE",     "None",           "—",    "Current — no action"),
+    ("React",           "18.3.1","npm",  "NONE",     "None",           "—",    "Current — no action"),
+    ("MySQL Connector", "9.0.0", "Java", "NONE",     "None",           "—",    "Current — no action"),
+    ("Hibernate",       "6.5.x", "Java", "NONE",     "None",           "—",    "Current — no action"),
 ]
 
 
-# ──────────────────────────────────────────────
-# Workbook 1: findings.xlsx
-# ──────────────────────────────────────────────
-def create_findings_workbook():
-    wb = Workbook()
+# ── Build workbook ────────────────────────────────────────────────────
+def build():
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    sheet1_findings(wb)
+    sheet2_endpoints(wb)
+    sheet3_deps(wb)
+    sheet4_risk_summary(wb)
+    wb.save(EXCEL_OUT)
+    print(f"✅ Security report saved: {EXCEL_OUT}")
 
-    # ── Sheet 1: Security Findings ──
-    ws1 = wb.active
-    ws1.title = "Security Findings"
 
-    headers = ["ID", "Severity", "Vulnerability Type", "File Path", "Endpoint",
-               "Description", "Exploitation Scenario", "Impact", "Recommended Fix", "CVSS"]
-    for col, header in enumerate(headers, 1):
-        cell = ws1.cell(row=1, column=col, value=header)
-        cell.fill = header_fill(HEADER_COLOR)
-        cell.font = bold_white(11)
-        cell.alignment = center_align()
-        cell.border = thin_border()
+def header_row(ws, row, cols, widths):
+    for i, (h, w) in enumerate(zip(cols, widths), 1):
+        c = ws.cell(row=row, column=i, value=h)
+        c.fill = fill(C["header"]); c.font = bold(10, "FFFFFF")
+        c.alignment = center(); c.border = border()
+        ws.column_dimensions[get_column_letter(i)].width = w
+    rh(ws, row, 22)
 
-    for row_idx, f in enumerate(FINDINGS, 2):
-        fill = header_fill(ALT_ROW_COLOR) if row_idx % 2 == 0 else header_fill(WHITE)
-        values = [f["id"], f["severity"], f["type"], f["file"], f["endpoint"],
-                  f["description"], f["exploitation"], f["impact"], f["fix"], f["cvss"]]
-        for col_idx, val in enumerate(values, 1):
-            cell = ws1.cell(row=row_idx, column=col_idx, value=val)
-            cell.alignment = left_align()
-            cell.border = thin_border()
-            if col_idx == 2:  # Severity column
-                cell.fill = severity_fill(f["severity"])
-                cell.font = Font(name="Calibri", bold=True, color=WHITE, size=10)
-                cell.alignment = center_align()
+
+# ── Sheet 1 — Security Findings ──────────────────────────────────────
+def sheet1_findings(wb):
+    ws = wb.create_sheet("Security Findings")
+    ws.freeze_panes = "A3"
+
+    ws.merge_cells("A1:H1")
+    ws["A1"] = f"🔐 Security Assessment — Smart Parking & Reservation System  |  {RUN_DATE}"
+    ws["A1"].fill = fill(C["title"]); ws["A1"].font = bold(13, "FFFFFF")
+    ws["A1"].alignment = center(); rh(ws, 1, 28)
+
+    cols   = ["ID", "Severity", "Vulnerability Type", "File / Location",
+              "Endpoint", "CVSS", "Description", "Recommended Fix"]
+    widths = [5, 12, 28, 35, 35, 8, 55, 55]
+    header_row(ws, 2, cols, widths)
+
+    for row, f in enumerate(FINDINGS, 3):
+        fid, sev, vtype, fpath, ep, cvss, desc, fix = f
+        bg = C["row_alt"] if row % 2 == 0 else C["row_white"]
+        sev_fg, sev_bg = SEV_COLOR.get(sev, ("000000", "FFFFFF"))
+
+        data = [fid, sev, vtype, fpath, ep, cvss, desc, fix]
+        for col, val in enumerate(data, 1):
+            cell = ws.cell(row=row, column=col, value=val)
+            cell.border = border()
+            cell.alignment = center() if col in (1, 2, 6) else left()
+            if col == 2:
+                cell.fill = fill(sev_bg)
+                cell.font = Font(bold=True, size=9, color=sev_fg)
             else:
-                cell.fill = fill
-                cell.font = normal_font()
+                cell.fill = fill(bg)
+                cell.font = Font(size=9)
+        rh(ws, row, 45)
 
-    set_col_widths(ws1, {
-        "A": 16, "B": 12, "C": 28, "D": 35, "E": 35,
-        "F": 55, "G": 50, "H": 45, "I": 55, "J": 12,
-    })
-    ws1.freeze_panes = "A2"
-    ws1.auto_filter.ref = ws1.dimensions
-    ws1.row_dimensions[1].height = 30
+    ws.auto_filter.ref = f"A2:H{len(FINDINGS)+2}"
 
-    # ── Sheet 2: Endpoint Inventory ──
-    ws2 = wb.create_sheet("Endpoint Inventory")
-    ep_headers = ["HTTP Method", "Endpoint", "Auth Required", "Expected Roles", "Controller File"]
-    for col, h in enumerate(ep_headers, 1):
-        cell = ws2.cell(row=1, column=col, value=h)
-        cell.fill = header_fill(HEADER_COLOR)
-        cell.font = bold_white()
-        cell.alignment = center_align()
-        cell.border = thin_border()
 
-    method_colors = {"GET": "1976D2", "POST": "388E3C", "PUT": "F57C00", "DELETE": "C62828"}
-    for row_idx, (method, endpoint, auth, roles, ctrl) in enumerate(ENDPOINTS, 2):
-        bg = ALT_ROW_COLOR if row_idx % 2 == 0 else WHITE
-        for col_idx, val in enumerate([method, endpoint, auth, roles, ctrl], 1):
-            cell = ws2.cell(row=row_idx, column=col_idx, value=val)
-            cell.border = thin_border()
-            cell.alignment = left_align()
-            if col_idx == 1:
-                cell.fill = header_fill(method_colors.get(method, "607D8B"))
-                cell.font = Font(name="Calibri", bold=True, color=WHITE, size=10)
-                cell.alignment = center_align()
-            elif col_idx == 3 and "should be" in val:
-                cell.fill = severity_fill("HIGH")
-                cell.font = Font(name="Calibri", bold=True, color=WHITE, size=9)
+# ── Sheet 2 — Endpoint Inventory ─────────────────────────────────────
+def sheet2_endpoints(wb):
+    ws = wb.create_sheet("Endpoint Inventory")
+    ws.freeze_panes = "A3"
+
+    ws.merge_cells("A1:E1")
+    ws["A1"] = "API Endpoint Inventory — 33 Endpoints (25 Unprotected)"
+    ws["A1"].fill = fill(C["title"]); ws["A1"].font = bold(13, "FFFFFF")
+    ws["A1"].alignment = center(); rh(ws, 1, 26)
+
+    cols   = ["Method", "Endpoint", "Auth Required", "Expected Role", "Controller"]
+    widths = [10, 40, 16, 18, 30]
+    header_row(ws, 2, cols, widths)
+
+    method_colors = {
+        "GET":    "27AE60", "POST":   "2980B9",
+        "PUT":    "F39C12", "DELETE": "C0392B",
+    }
+    for row, (method, ep, auth, role, ctrl) in enumerate(ENDPOINTS, 3):
+        bg = C["row_alt"] if row % 2 == 0 else C["row_white"]
+        data = [method, ep, "✅ YES" if auth else "❌ NO", role, ctrl]
+        for col, val in enumerate(data, 1):
+            cell = ws.cell(row=row, column=col, value=val)
+            cell.border = border()
+            cell.alignment = center() if col in (1, 3, 4) else left()
+            if col == 1:
+                cell.fill = fill(method_colors.get(method, "555555"))
+                cell.font = bold(9, "FFFFFF")
+            elif col == 3:
+                cell.fill = fill("D5F5E3" if auth else "FADBD8")
+                cell.font = Font(bold=True, size=9,
+                                 color="1A5276" if auth else "922B21")
             else:
-                cell.fill = header_fill(bg)
-                cell.font = normal_font()
+                cell.fill = fill(bg)
+                cell.font = Font(size=9)
+        rh(ws, row, 18)
 
-    set_col_widths(ws2, {"A": 14, "B": 45, "C": 25, "D": 22, "E": 38})
-    ws2.freeze_panes = "A2"
-    ws2.auto_filter.ref = ws2.dimensions
 
-    # ── Sheet 3: Dependency Vulnerabilities ──
-    ws3 = wb.create_sheet("Dependency Vulnerabilities")
-    dep_headers = ["Package Name", "Artifact ID", "Version", "Risk", "CVEs / Notes", "Recommended Action"]
-    for col, h in enumerate(dep_headers, 1):
-        cell = ws3.cell(row=1, column=col, value=h)
-        cell.fill = header_fill(HEADER_COLOR)
-        cell.font = bold_white()
-        cell.alignment = center_align()
-        cell.border = thin_border()
+# ── Sheet 3 — Dependency Vulnerabilities ─────────────────────────────
+def sheet3_deps(wb):
+    ws = wb.create_sheet("Dependency Vulnerabilities")
+    ws.merge_cells("A1:G1")
+    ws["A1"] = "Dependency Vulnerability Report"
+    ws["A1"].fill = fill(C["title"]); ws["A1"].font = bold(13, "FFFFFF")
+    ws["A1"].alignment = center(); rh(ws, 1, 26)
 
-    for row_idx, dep in enumerate(DEPENDENCIES, 2):
-        bg = ALT_ROW_COLOR if row_idx % 2 == 0 else WHITE
-        for col_idx, val in enumerate(dep, 1):
-            cell = ws3.cell(row=row_idx, column=col_idx, value=val)
-            cell.border = thin_border()
-            cell.alignment = left_align()
-            if col_idx == 4:
-                cell.fill = severity_fill(dep[3])
-                cell.font = Font(name="Calibri", bold=True, color=WHITE, size=10)
-                cell.alignment = center_align()
+    cols   = ["Package", "Version", "Ecosystem", "Risk Level", "CVE ID", "CVSS", "Action"]
+    widths = [22, 12, 12, 14, 20, 8, 45]
+    header_row(ws, 2, cols, widths)
+
+    for row, (pkg, ver, eco, risk, cve, cvss, action) in enumerate(DEPS, 3):
+        bg = C["row_alt"] if row % 2 == 0 else C["row_white"]
+        sev_fg, sev_bg = SEV_COLOR.get(risk, ("555555", C["row_white"]))
+        data = [pkg, ver, eco, risk, cve, cvss, action]
+        for col, val in enumerate(data, 1):
+            cell = ws.cell(row=row, column=col, value=val)
+            cell.border = border()
+            cell.alignment = center() if col in (2, 3, 5, 6) else left()
+            if col == 4:
+                cell.fill = fill(sev_bg)
+                cell.font = Font(bold=True, size=9, color=sev_fg)
             else:
-                cell.fill = header_fill(bg)
-                cell.font = normal_font()
+                cell.fill = fill(bg)
+                cell.font = Font(size=9)
+        rh(ws, row, 18)
 
-    set_col_widths(ws3, {"A": 22, "B": 35, "C": 15, "D": 12, "E": 45, "F": 38})
-    ws3.freeze_panes = "A2"
 
-    # ── Sheet 4: Risk Summary ──
-    ws4 = wb.create_sheet("Risk Summary")
-    ws4["A1"] = "Smart Parking & Reservation System — Security Risk Summary"
-    ws4["A1"].font = Font(name="Calibri", bold=True, size=16, color=HEADER_COLOR)
-    ws4["A1"].alignment = center_align()
-    ws4.merge_cells("A1:D1")
-    ws4.row_dimensions[1].height = 40
+# ── Sheet 4 — Risk Summary ────────────────────────────────────────────
+def sheet4_risk_summary(wb):
+    ws = wb.create_sheet("Risk Summary")
+    ws.merge_cells("A1:C1")
+    ws["A1"] = "Risk Summary Dashboard"
+    ws["A1"].fill = fill(C["title"]); ws["A1"].font = bold(13, "FFFFFF")
+    ws["A1"].alignment = center(); rh(ws, 1, 26)
 
-    ws4["A3"] = f"Assessment Date: {datetime.now().strftime('%Y-%m-%d')}"
-    ws4["A3"].font = normal_font(size=12)
-    ws4["A4"] = "Repository: https://github.com/Viru-6281/pdd-main"
-    ws4["A4"].font = normal_font(size=12)
-    ws4["A5"] = "Overall Security Score: 8 / 100"
-    ws4["A5"].font = Font(name="Calibri", bold=True, size=14, color=CRITICAL_COLOR)
+    # Severity counts
+    sev_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+    for f in FINDINGS:
+        sev_counts[f[1]] = sev_counts.get(f[1], 0) + 1
 
-    summary_data = [
-        ("", "", "", ""),
-        ("Severity", "Count", "% of Total", "Status"),
-        ("CRITICAL", 3, "17.6%", "🔴 Requires immediate remediation"),
-        ("HIGH", 5, "29.4%", "🟠 Requires urgent action"),
-        ("MEDIUM", 5, "29.4%", "🟡 Address in next sprint"),
-        ("LOW", 4, "23.5%", "🟢 Routine improvement"),
-        ("TOTAL", 17, "100%", "NOT PRODUCTION READY"),
+    summary = [
+        ("Assessment Date",    RUN_DATE),
+        ("Overall Score",      "8 / 100  🔴 Critical"),
+        ("Total Findings",     len(FINDINGS)),
+        ("Critical",           sev_counts["CRITICAL"]),
+        ("High",               sev_counts["HIGH"]),
+        ("Medium",             sev_counts["MEDIUM"]),
+        ("Low",                sev_counts["LOW"]),
+        ("Endpoints Scanned",  33),
+        ("Unprotected Endpoints", 25),
+        ("CVEs Found",         1),
+        ("Top CVE",            "CVE-2020-13936 (CVSS 9.8)"),
+        ("OWASP Top 10 Fails", "A01, A02, A03, A05, A06, A07"),
     ]
+    for row, (k, v) in enumerate(summary, 2):
+        ws[f"A{row}"] = k
+        ws[f"B{row}"] = v
+        ws[f"A{row}"].font = bold(10)
+        ws[f"A{row}"].fill = fill(C["summary"])
+        ws[f"B{row}"].font = Font(size=10)
+        rh(ws, row, 18)
 
-    start_row = 7
-    for r_idx, row in enumerate(summary_data, start_row):
-        for c_idx, val in enumerate(row, 1):
-            cell = ws4.cell(row=r_idx, column=c_idx, value=val)
-            cell.border = thin_border()
-            cell.alignment = center_align()
-            if r_idx == start_row + 1:  # Header row
-                cell.fill = header_fill(HEADER_COLOR)
-                cell.font = bold_white()
-            elif r_idx == start_row + 2:
-                cell.fill = severity_fill("CRITICAL")
-                cell.font = Font(name="Calibri", bold=True, color=WHITE)
-            elif r_idx == start_row + 3:
-                cell.fill = severity_fill("HIGH")
-                cell.font = Font(name="Calibri", bold=True, color=WHITE)
-            elif r_idx == start_row + 4:
-                cell.fill = severity_fill("MEDIUM")
-                cell.font = Font(name="Calibri", bold=True, color="000000")
-            elif r_idx == start_row + 5:
-                cell.fill = severity_fill("LOW")
-                cell.font = Font(name="Calibri", bold=True, color=WHITE)
-            elif r_idx == start_row + 6:
-                cell.fill = severity_fill("CRITICAL")
-                cell.font = Font(name="Calibri", bold=True, color=WHITE)
-            else:
-                cell.font = normal_font()
+    # Chart
+    chart_row = 16
+    for i, (sev, cnt) in enumerate(sev_counts.items(), chart_row):
+        ws[f"A{i}"] = sev
+        ws[f"B{i}"] = cnt
 
-    set_col_widths(ws4, {"A": 18, "B": 12, "C": 15, "D": 45})
+    chart = BarChart()
+    chart.type = "col"; chart.title = "Findings by Severity"
+    chart.y_axis.title = "Count"; chart.x_axis.title = "Severity"
+    chart.style = 10
+    data = Reference(ws, min_col=2, min_row=chart_row, max_row=chart_row + 3)
+    cats = Reference(ws, min_col=1, min_row=chart_row, max_row=chart_row + 3)
+    chart.add_data(data); chart.set_categories(cats)
+    ws.add_chart(chart, "D2")
 
-    path = os.path.join(OUTPUT_DIR, "findings.xlsx")
-    wb.save(path)
-    print(f"✅ Saved: {path}")
-
-
-# ──────────────────────────────────────────────
-# Workbook 2: endpoint-inventory.xlsx (standalone)
-# ──────────────────────────────────────────────
-def create_endpoint_inventory():
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "API Endpoint Inventory"
-
-    headers = ["#", "HTTP Method", "Endpoint Path", "Auth Required", "Expected Roles",
-               "Controller File", "Security Risk"]
-    for col, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col, value=h)
-        cell.fill = header_fill(HEADER_COLOR)
-        cell.font = bold_white()
-        cell.alignment = center_align()
-        cell.border = thin_border()
-
-    method_colors = {"GET": "1976D2", "POST": "388E3C", "PUT": "F57C00", "DELETE": "C62828"}
-    for row_idx, (method, endpoint, auth, roles, ctrl) in enumerate(ENDPOINTS, 2):
-        is_risky = "should be" in auth.lower()
-        bg = "FFEBEE" if is_risky else (ALT_ROW_COLOR if row_idx % 2 == 0 else WHITE)
-        risk = "⚠️ Unprotected" if is_risky else "✅ Public"
-
-        for col_idx, val in enumerate([row_idx - 1, method, endpoint, auth, roles, ctrl, risk], 1):
-            cell = ws.cell(row=row_idx, column=col_idx, value=val)
-            cell.border = thin_border()
-            cell.alignment = left_align()
-            if col_idx == 2:
-                cell.fill = header_fill(method_colors.get(method, "607D8B"))
-                cell.font = Font(name="Calibri", bold=True, color=WHITE, size=10)
-                cell.alignment = center_align()
-            elif col_idx == 7 and is_risky:
-                cell.fill = severity_fill("HIGH")
-                cell.font = Font(name="Calibri", bold=True, color=WHITE, size=10)
-                cell.alignment = center_align()
-            else:
-                cell.fill = header_fill(bg)
-                cell.font = normal_font()
-
-    set_col_widths(ws, {"A": 6, "B": 14, "C": 48, "D": 26, "E": 22, "F": 38, "G": 20})
-    ws.freeze_panes = "A2"
-    ws.auto_filter.ref = ws.dimensions
-
-    path = os.path.join(OUTPUT_DIR, "endpoint-inventory.xlsx")
-    wb.save(path)
-    print(f"✅ Saved: {path}")
+    for col, w in [("A", 28), ("B", 30), ("C", 15)]:
+        ws.column_dimensions[col].width = w
 
 
 if __name__ == "__main__":
-    print("🔐 Generating security reports...")
-    create_findings_workbook()
-    create_endpoint_inventory()
-    print("\n✅ All reports generated in:", OUTPUT_DIR)
-    print("  📄 findings.xlsx — Security findings + endpoint inventory + dependency + risk summary")
-    print("  📄 endpoint-inventory.xlsx — Standalone API inventory")
+    print(f"🔄 Generating Security Assessment Excel...")
+    build()
+    print("✅ Done!")

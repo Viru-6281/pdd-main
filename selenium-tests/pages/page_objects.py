@@ -1,5 +1,6 @@
 """
-Selenium Page Object Model — Smart Parking & Reservation System
+page_objects.py — Page Object Model for Smart Parking & Reservation System
+All page objects use BASE_URL from environment — never hardcoded localhost.
 """
 
 import os
@@ -7,176 +8,287 @@ import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
-BASE_URL = os.getenv("BASE_URL", "https://Viru-6281.github.io/spic-pdd/")
-TIMEOUT = 15
+BASE_URL = os.getenv("BASE_URL", "https://viru-6281.github.io/pdd-main/").rstrip("/")
+TIMEOUT  = 20
 
 
 class BasePage:
-    """Base class for all Page Objects."""
+    """Common browser actions shared by all page objects."""
 
     def __init__(self, driver):
         self.driver = driver
-        self.wait = WebDriverWait(driver, TIMEOUT)
+        self.wait   = WebDriverWait(driver, TIMEOUT)
 
-    def go_to(self, path: str = ""):
-        self.driver.get(BASE_URL + path)
+    def navigate_to(self, hash_path: str = ""):
+        url = f"{BASE_URL}/#{hash_path}" if hash_path else BASE_URL
+        self.driver.get(url)
         time.sleep(2)
+        return self
 
-    def take_screenshot(self, name: str):
-        os.makedirs("Test Results/Screenshots", exist_ok=True)
-        path = f"Test Results/Screenshots/{name}_{int(time.time())}.png"
-        self.driver.save_screenshot(path)
-        return path
+    def get_title(self):
+        return self.driver.title
 
-    def get_element(self, by, value, timeout: int = TIMEOUT):
+    def get_url(self):
+        return self.driver.current_url
+
+    def get_body_text(self):
+        return self.driver.find_element(By.TAG_NAME, "body").text
+
+    def screenshot(self, name: str):
+        import pathlib
+        d = pathlib.Path("Test Results/Screenshots")
+        d.mkdir(parents=True, exist_ok=True)
+        self.driver.save_screenshot(str(d / f"{name}.png"))
+
+    def find(self, by, value, timeout=TIMEOUT):
         return WebDriverWait(self.driver, timeout).until(
             EC.presence_of_element_located((by, value))
         )
 
-    def click_element(self, by, value):
-        element = WebDriverWait(self.driver, TIMEOUT).until(
-            EC.element_to_be_clickable((by, value))
-        )
-        element.click()
+    def find_all(self, by, value):
+        return self.driver.find_elements(by, value)
 
-    def type_text(self, by, value, text: str):
-        element = self.get_element(by, value)
-        element.clear()
-        element.send_keys(text)
+    def click(self, by, value):
+        el = self.wait.until(EC.element_to_be_clickable((by, value)))
+        el.click()
+        time.sleep(1)
+        return el
+
+    def type_into(self, by, value, text: str):
+        el = self.find(by, value)
+        el.clear()
+        el.send_keys(text)
+        return el
+
+    def is_on_page(self, hash_fragment: str) -> bool:
+        return hash_fragment in self.driver.current_url
+
+    def no_alert_present(self):
+        try:
+            a = self.driver.switch_to.alert
+            txt = a.text
+            a.accept()
+            return False, txt
+        except Exception:
+            return True, None
 
 
-class HomeAnimationPage(BasePage):
-    """Page Object for the landing animation page (/)."""
+# ─────────────────────────────────────────────────────────────────────
+class LandingPage(BasePage):
+    """/ — Car animation splash screen."""
+
+    PATH = ""
 
     def open(self):
-        self.go_to("#/")
-        return self
+        return self.navigate_to(self.PATH)
 
     def is_loaded(self) -> bool:
-        body = self.driver.find_element(By.TAG_NAME, "body")
-        return body is not None
-
-    def navigate_to_lender_login(self):
-        self.go_to("#/lenderLogin")
+        body = self.get_body_text()
+        return "Cannot GET" not in body and "404" not in self.get_title()
 
 
+# ─────────────────────────────────────────────────────────────────────
 class UserLoginPage(BasePage):
-    """Page Object for /userLogin."""
+    """/userLogin"""
 
-    # Element locators
-    EMAIL_FIELD = (By.CSS_SELECTOR, "input[type='email'], input[id='email'], input[placeholder*='email' i]")
-    PASSWORD_FIELD = (By.CSS_SELECTOR, "input[type='password'], input[id='password']")
-    LOGIN_BUTTON = (By.CSS_SELECTOR, "button[id='login-button'], button[type='submit']")
+    PATH = "/userLogin"
+
+    # Locators — flexible to accommodate any CSS framework
+    EMAIL_SELECTORS = [
+        (By.CSS_SELECTOR, "input[type='email']"),
+        (By.CSS_SELECTOR, "input[id*='email' i]"),
+        (By.CSS_SELECTOR, "input[placeholder*='email' i]"),
+        (By.CSS_SELECTOR, "input[name*='email' i]"),
+    ]
+    PASSWORD_SELECTORS = [
+        (By.CSS_SELECTOR, "input[type='password']"),
+        (By.CSS_SELECTOR, "input[id*='password' i]"),
+        (By.CSS_SELECTOR, "input[placeholder*='password' i]"),
+    ]
+    BUTTON_SELECTORS = [
+        (By.CSS_SELECTOR, "button[type='submit']"),
+        (By.XPATH, "//button[contains(translate(text(),'LOGIN','login'),'login')]"),
+        (By.TAG_NAME, "button"),
+    ]
 
     def open(self):
-        self.go_to("#/userLogin")
-        return self
+        return self.navigate_to(self.PATH)
+
+    def _find_first(self, selector_list):
+        for by, val in selector_list:
+            els = self.driver.find_elements(by, val)
+            if els:
+                return els[0]
+        return None
 
     def enter_email(self, email: str):
-        fields = self.driver.find_elements(*self.EMAIL_FIELD)
-        if fields:
-            fields[0].clear()
-            fields[0].send_keys(email)
+        el = self._find_first(self.EMAIL_SELECTORS)
+        if el:
+            el.clear()
+            el.send_keys(email)
+        return self
 
     def enter_password(self, password: str):
-        fields = self.driver.find_elements(*self.PASSWORD_FIELD)
-        if fields:
-            fields[0].clear()
-            fields[0].send_keys(password)
+        el = self._find_first(self.PASSWORD_SELECTORS)
+        if el:
+            el.clear()
+            el.send_keys(password)
+        return self
 
     def click_login(self):
-        buttons = self.driver.find_elements(By.TAG_NAME, "button")
-        for btn in buttons:
-            if any(text in btn.text.lower() for text in ["login", "sign in", "submit"]):
-                try:
-                    btn.click()
-                    time.sleep(2)
-                    return
-                except Exception:
-                    pass
+        el = self._find_first(self.BUTTON_SELECTORS)
+        if el:
+            try:
+                el.click()
+                time.sleep(3)
+            except Exception:
+                pass
+        return self
 
-    def login_with(self, email: str, password: str):
-        self.enter_email(email)
-        self.enter_password(password)
-        self.click_login()
+    def login(self, email: str, password: str):
+        return self.enter_email(email).enter_password(password).click_login()
 
-    def get_current_url(self) -> str:
-        return self.driver.current_url
+    def is_authenticated(self) -> bool:
+        return "userHome" in self.get_url()
 
-    def is_on_dashboard(self) -> bool:
-        return "userHome" in self.driver.current_url
+    def has_email_field(self) -> bool:
+        return self._find_first(self.EMAIL_SELECTORS) is not None
+
+    def has_password_field(self) -> bool:
+        return self._find_first(self.PASSWORD_SELECTORS) is not None
 
 
+# ─────────────────────────────────────────────────────────────────────
 class LenderLoginPage(BasePage):
-    """Page Object for /lenderLogin."""
+    """/lenderLogin"""
+
+    PATH = "/lenderLogin"
 
     def open(self):
-        self.go_to("#/lenderLogin")
+        return self.navigate_to(self.PATH)
+
+    def _find_email(self):
+        for sel in [
+            "input[type='email']", "input[id*='email' i]",
+            "input[placeholder*='email' i]"
+        ]:
+            els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+            if els:
+                return els[0]
+        return None
+
+    def _find_password(self):
+        els = self.driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
+        return els[0] if els else None
+
+    def _find_button(self):
+        for btn in self.driver.find_elements(By.TAG_NAME, "button"):
+            if "login" in btn.text.lower() or "sign in" in btn.text.lower():
+                return btn
+        btns = self.driver.find_elements(By.TAG_NAME, "button")
+        return btns[0] if btns else None
+
+    def login(self, email: str, password: str):
+        ef = self._find_email()
+        pf = self._find_password()
+        if ef:
+            ef.clear(); ef.send_keys(email)
+        if pf:
+            pf.clear(); pf.send_keys(password)
+        btn = self._find_button()
+        if btn:
+            try:
+                btn.click(); time.sleep(3)
+            except Exception:
+                pass
         return self
 
-    def login_with(self, email: str, password: str):
-        fields = self.driver.find_elements(By.CSS_SELECTOR, "input[type='email'], input[type='text']")
-        pass_fields = self.driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
-
-        if fields:
-            fields[0].clear()
-            fields[0].send_keys(email)
-        if pass_fields:
-            pass_fields[0].clear()
-            pass_fields[0].send_keys(password)
-
-        buttons = self.driver.find_elements(By.TAG_NAME, "button")
-        for btn in buttons:
-            if "login" in btn.text.lower() or "sign" in btn.text.lower():
-                try:
-                    btn.click()
-                    time.sleep(2)
-                    break
-                except Exception:
-                    pass
-
-    def is_on_dashboard(self) -> bool:
-        return "lenderHome" in self.driver.current_url
+    def is_authenticated(self) -> bool:
+        return "lenderHome" in self.get_url()
 
 
+# ─────────────────────────────────────────────────────────────────────
 class UserRegistrationPage(BasePage):
-    """Page Object for /userRegister."""
+    """/userRegister"""
+
+    PATH = "/userRegister"
 
     def open(self):
-        self.go_to("#/userRegister")
+        return self.navigate_to(self.PATH)
+
+    def get_all_inputs(self):
+        return self.driver.find_elements(By.TAG_NAME, "input")
+
+    def fill_xss_in_all_fields(self, payload: str):
+        for inp in self.get_all_inputs():
+            try:
+                t = inp.get_attribute("type") or ""
+                if t not in ("submit", "button", "checkbox", "radio", "hidden"):
+                    inp.clear()
+                    inp.send_keys(payload)
+            except Exception:
+                pass
         return self
 
-    def fill_registration_form(self, name: str, email: str, password: str, mobile: str = "", address: str = ""):
-        inputs = self.driver.find_elements(By.TAG_NAME, "input")
-        for inp in inputs:
-            placeholder = inp.get_attribute("placeholder") or ""
-            input_type = inp.get_attribute("type") or "text"
-            input_id = inp.get_attribute("id") or ""
+    def has_inputs(self) -> bool:
+        return len(self.get_all_inputs()) > 0
 
-            if "name" in placeholder.lower() or "name" in input_id.lower():
-                inp.clear()
-                inp.send_keys(name)
-            elif "email" in placeholder.lower() or input_type == "email" or "email" in input_id.lower():
-                inp.clear()
-                inp.send_keys(email)
-            elif input_type == "password":
-                inp.clear()
-                inp.send_keys(password)
-            elif "mobile" in placeholder.lower() or "phone" in placeholder.lower():
-                inp.clear()
-                inp.send_keys(mobile)
-            elif "address" in placeholder.lower():
-                inp.clear()
-                inp.send_keys(address)
 
-    def submit(self):
-        buttons = self.driver.find_elements(By.TAG_NAME, "button")
-        for btn in buttons:
-            if any(t in btn.text.lower() for t in ["register", "sign up", "create", "submit"]):
-                try:
-                    btn.click()
-                    time.sleep(2)
-                    return
-                except Exception:
-                    pass
+# ─────────────────────────────────────────────────────────────────────
+class LenderRegistrationPage(BasePage):
+    """/lenderRegister"""
+
+    PATH = "/lenderRegister"
+
+    def open(self):
+        return self.navigate_to(self.PATH)
+
+    def has_inputs(self) -> bool:
+        return len(self.driver.find_elements(By.TAG_NAME, "input")) > 0
+
+
+# ─────────────────────────────────────────────────────────────────────
+class UserHomePage(BasePage):
+    """/userHome — protected page."""
+
+    PATH = "/userHome"
+
+    def open(self):
+        return self.navigate_to(self.PATH)
+
+    def is_dashboard_visible(self) -> bool:
+        return "userHome" in self.get_url()
+
+
+# ─────────────────────────────────────────────────────────────────────
+class BookParkingPage(BasePage):
+    """/book-parking/:lenderId"""
+
+    def open(self, lender_id: int = 1):
+        return self.navigate_to(f"/book-parking/{lender_id}")
+
+
+# ─────────────────────────────────────────────────────────────────────
+class ViewMapPage(BasePage):
+    """/user/view-map"""
+
+    def open(self):
+        return self.navigate_to("/user/view-map")
+
+
+# ─────────────────────────────────────────────────────────────────────
+class RatingsPage(BasePage):
+    """/user/give-rating"""
+
+    def open(self):
+        return self.navigate_to("/user/give-rating")
+
+
+# ─────────────────────────────────────────────────────────────────────
+class AddVehiclePage(BasePage):
+    """/user/add-vehicle"""
+
+    def open(self):
+        return self.navigate_to("/user/add-vehicle")

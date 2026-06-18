@@ -1,1 +1,1 @@
-# test package
+"""selenium-tests/tests/__init__.py"""
