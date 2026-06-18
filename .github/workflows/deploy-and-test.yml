@@ -81,15 +81,13 @@ jobs:
         uses: actions/deploy-pages@v4
 
   # ══════════════════════════════════════════
-  # JOB 3: Verify Deployment (non-blocking)
+  # JOB 3: Verify Deployment (blocking)
   # ══════════════════════════════════════════
   verify-deployment:
     name: ✅ Verify Deployment
     runs-on: ubuntu-latest
     needs: deploy
     if: github.event_name != 'pull_request'
-    outputs:
-      site_ready: ${{ steps.check.outputs.site_ready }}
     steps:
       - name: Wait for GitHub Pages propagation
         run: |
@@ -97,31 +95,29 @@ jobs:
           sleep 60
 
       - name: Check deployment URL
-        id: check
         run: |
           URL="https://${{ env.GITHUB_USERNAME }}.github.io/${{ env.REPO_NAME }}/"
           echo "Checking: $URL"
-          SITE_READY=false
 
-          for i in $(seq 1 12); do
+          # Wait up to 5 minutes for deployment to propagate
+          for i in $(seq 1 20); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" --max-time 20 || echo "000")
-            echo "Attempt $i: HTTP $STATUS"
+            echo "Attempt $i/20: HTTP $STATUS"
             if [ "$STATUS" -eq "200" ] || [ "$STATUS" -eq "301" ] || [ "$STATUS" -eq "302" ]; then
               echo "✅ Site is live! HTTP $STATUS"
-              SITE_READY=true
-              break
+              
+              echo "## ✅ Deployment Check"          >> $GITHUB_STEP_SUMMARY
+              echo "URL: $URL"                        >> $GITHUB_STEP_SUMMARY
+              echo "Status: HTTP $STATUS"             >> $GITHUB_STEP_SUMMARY
+              exit 0
             fi
             sleep 15
           done
 
-          echo "site_ready=$SITE_READY" >> $GITHUB_OUTPUT
+          echo "❌ Deployment not ready after 5 minutes."
+          echo "## ❌ Deployment Verification Failed" >> $GITHUB_STEP_SUMMARY
+          exit 1
 
-          echo "## ✅ Deployment Check"          >> $GITHUB_STEP_SUMMARY
-          echo "URL: $URL"                        >> $GITHUB_STEP_SUMMARY
-          echo "Site Ready: $SITE_READY"          >> $GITHUB_STEP_SUMMARY
-
-          # Always succeed — selenium tests handle unavailable site gracefully
-          echo "Deployment verification complete (site_ready=$SITE_READY)"
 
   # ══════════════════════════════════════════
   # JOB 4: Selenium E2E Tests
