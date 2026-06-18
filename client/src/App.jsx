@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { HashRouter, Route, Routes } from "react-router-dom";
 import CarAnimation from "./animations/CarAnimation";
 import Login from "./Authorization/Login";
 import Register from "./Authorization/Register";
@@ -25,7 +25,7 @@ export default function App()
 {
   return (
     <div>
-      <BrowserRouter>
+      <HashRouter>
       <Routes>
         <Route path="/" element={<CarAnimation />} />
         <Route path="/lenderLogin" element={<Login />} />
@@ -49,7 +49,7 @@ export default function App()
         <Route path="/user/viewBookings" element={<UserBookings />} />
         <Route path="/user/give-rating" element={<GiveRatings />} />
       </Routes>
-      </BrowserRouter>
+      </HashRouter>
       <ToastContainer />
     </div>
   )
