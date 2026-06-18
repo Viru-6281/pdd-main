@@ -183,21 +183,23 @@ jobs:
 
       - name: Count results and print summary
         if: always()
+        continue-on-error: true
         run: |
           LOG="Test Results/Logs/pytest.log"
           if [ -f "$LOG" ]; then
-            PASSED=$(grep -c " PASSED" "$LOG" 2>/dev/null || echo "0")
-            FAILED=$(grep -c " FAILED" "$LOG" 2>/dev/null || echo "0")
-            ERROR=$(grep -c " ERROR" "$LOG" 2>/dev/null || echo "0")
+            PASSED=$(grep -o " PASSED" "$LOG" | wc -l || true)
+            FAILED=$(grep -o " FAILED" "$LOG" | wc -l || true)
+            ERROR=$(grep -o " ERROR" "$LOG" | wc -l || true)
+            PASSED=${PASSED:-0}; FAILED=${FAILED:-0}; ERROR=${ERROR:-0}
             TOTAL=$((PASSED + FAILED + ERROR))
             echo "=============================="
             echo " Total:  $TOTAL"
-            echo " Passed: $PASSED ✅"
-            echo " Failed: $FAILED ❌"
-            echo " Errors: $ERROR ⚠️"
+            echo " Passed: $PASSED PASSED"
+            echo " Failed: $FAILED FAILED"
+            echo " Errors: $ERROR ERROR"
             echo "=============================="
           else
-            echo "Log file not found — pytest may have crashed"
+            echo "Log file not found"
           fi
 
       - name: Upload all test artifacts
@@ -210,13 +212,19 @@ jobs:
 
       - name: Publish GitHub Actions summary
         if: always()
+        continue-on-error: true
         run: |
           LOG="Test Results/Logs/pytest.log"
-          PASSED=$(grep -c " PASSED" "$LOG" 2>/dev/null || echo "0")
-          FAILED=$(grep -c " FAILED" "$LOG" 2>/dev/null || echo "0")
+          PASSED=$(grep -o " PASSED" "$LOG" 2>/dev/null | wc -l || echo 0)
+          FAILED=$(grep -o " FAILED" "$LOG" 2>/dev/null | wc -l || echo 0)
+          PASSED=$(echo $PASSED | tr -d ' ')
+          FAILED=$(echo $FAILED | tr -d ' ')
           TOTAL=$((PASSED + FAILED))
-          PCT=$([ "$TOTAL" -gt 0 ] && python3 -c "print(f'{$PASSED*100/$TOTAL:.1f}')" || echo "0")
-
+          if [ "$TOTAL" -gt 0 ]; then
+            PCT=$(python3 -c "print(round($PASSED*100/$TOTAL,1))")
+          else
+            PCT=0
+          fi
           cat >> $GITHUB_STEP_SUMMARY << EOF
           # 🧪 Selenium E2E Test Summary
 
@@ -231,12 +239,12 @@ jobs:
 
           | Status | Count |
           |---|---|
-          | ✅ Passed | $PASSED |
-          | ❌ Failed | $FAILED |
-          | 📊 Total | $TOTAL |
-          | 🎯 Pass Rate | $PCT% |
+          | Passed | $PASSED |
+          | Failed | $FAILED |
+          | Total | $TOTAL |
+          | Pass Rate | ${PCT}% |
 
-          > Download full reports from **Artifacts → selenium-e2e-results-build-${{ github.run_number }}**
+          Download full reports from Artifacts: selenium-e2e-results-build-${{ github.run_number }}
           EOF
 
   # ─────────────────────────────────────────────────────────────────
