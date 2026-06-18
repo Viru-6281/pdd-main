@@ -78,30 +78,21 @@ def pytest_runtest_makereport(item, call):
 
 
 # ── Pytest metadata ──────────────────────────────────────────────────
-def pytest_configure(config):
-    config.addinivalue_line(
-        "markers",
-        "security: mark test as a security/DAST test"
-    )
-    config.addinivalue_line(
-        "markers",
-        "smoke: mark test as part of the smoke test suite"
-    )
-    config.addinivalue_line(
-        "markers",
-        "regression: mark test as a regression test"
-    )
+
 
 
 def pytest_html_report_title(report):
     report.title = "Smart Parking — Selenium E2E Test Report"
 
 
-def pytest_html_env(config):
-    return {
-        "Base URL":    BASE_URL,
-        "Browser":     "Google Chrome (Headless)",
-        "Framework":   "Selenium 4.21.0",
-        "Python":      "3.11",
-        "Environment": "GitHub Pages (Production)",
-    }
+def pytest_configure(config):
+    # Custom markers
+    config.addinivalue_line("markers", "security: mark test as a security/DAST test")
+    config.addinivalue_line("markers", "smoke: mark test as part of the smoke test suite")
+    config.addinivalue_line("markers", "regression: mark test as a regression test")
+    # Inject metadata into HTML report (pytest-html 4.x compatible)
+    if hasattr(config, '_metadata'):
+        config._metadata['Base URL'] = BASE_URL
+        config._metadata['Browser'] = 'Google Chrome (Headless)'
+        config._metadata['Framework'] = 'Selenium 4.21.0'
+        config._metadata['Environment'] = 'GitHub Pages (Production)'
