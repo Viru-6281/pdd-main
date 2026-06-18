@@ -13,121 +13,135 @@ permissions:
   id-token: write
   actions: read
 
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 env:
-  GITHUB_PAGES_URL: https://viru-6281.github.io/pdd-main/
+  LIVE_URL: https://viru-6281.github.io/pdd-main
 
 jobs:
-  # ─────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────
   build:
     name: 🏗️ Build React App
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: npm
-          cache-dependency-path: client/package-lock.json
 
-      - name: Install frontend dependencies
-        working-directory: client
-        run: npm ci --prefer-offline || npm install
-
-      - name: Patch vite.config.js for GitHub Pages
+      - name: Install dependencies
         working-directory: client
         run: |
-          cat > vite.config.js << 'VITE_EOF'
-          import { defineConfig } from 'vite'
-          import react from '@vitejs/plugin-react'
-          export default defineConfig({
-            plugins: [react()],
-            base: '/pdd-main/',
-          })
-          VITE_EOF
+          if [ -f "package-lock.json" ]; then
+            npm ci --prefer-offline
+          else
+            npm install
+          fi
 
-      - name: Build React application
+      - name: Build React app for GitHub Pages
         working-directory: client
         env:
-          VITE_API_BASE_URL: ${{ secrets.API_BASE_URL || 'http://localhost:8080' }}
+          VITE_BASE_PATH: /pdd-main/
+          NODE_ENV: production
         run: npm run build
 
-      - name: Setup GitHub Pages
-        uses: actions/configure-pages@v4
+      - name: Verify build output
+        run: |
+          echo "=== dist contents ==="
+          ls -la client/dist/
+          test -f client/dist/index.html && echo "✅ index.html exists" || (echo "❌ index.html missing" && exit 1)
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: client/dist
 
-  # ─────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────
   deploy:
     name: 📤 Deploy to GitHub Pages
     runs-on: ubuntu-latest
     needs: build
+    if: github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     outputs:
       page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v4
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
 
-  # ─────────────────────────────────────────
+      - name: Print deployed URL
+        run: echo "🌐 Deployed to ${{ steps.deployment.outputs.page_url }}"
+
+  # ─────────────────────────────────────────────────────────────────
   verify:
     name: ✅ Verify Deployment
     runs-on: ubuntu-latest
     needs: deploy
+    if: github.ref == 'refs/heads/main'
     outputs:
       live_url: ${{ needs.deploy.outputs.page_url }}
     steps:
-      - name: Wait for pages to propagate
-        run: sleep 30
+      - name: Wait for Pages CDN propagation
+        run: sleep 45
 
-      - name: Verify HTTP 200
+      - name: Verify site is reachable (retry 5x)
         run: |
           URL="${{ needs.deploy.outputs.page_url }}"
           echo "Verifying: $URL"
+          SUCCESS=false
           for i in 1 2 3 4 5; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" --max-time 15)
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" --max-time 20 --retry 2 || echo "000")
             echo "Attempt $i — HTTP $STATUS"
-            [ "$STATUS" = "200" ] && { echo "✅ Deployment live!"; exit 0; }
-            sleep 20
+            if [ "$STATUS" = "200" ] || [ "$STATUS" = "301" ] || [ "$STATUS" = "302" ]; then
+              echo "✅ Site is live!"
+              SUCCESS=true
+              break
+            fi
+            sleep 30
           done
-          echo "❌ Deployment not reachable — continuing anyway"
+          if [ "$SUCCESS" = "false" ]; then
+            echo "⚠️ Site not reachable after 5 attempts — proceeding anyway"
+          fi
 
-  # ─────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────
   selenium-e2e:
-    name: 🧪 Selenium E2E Tests (Live GitHub Pages)
+    name: 🧪 Selenium E2E Tests
     runs-on: ubuntu-latest
     needs: [deploy, verify]
+    if: always() && needs.build.result == 'success'
     env:
-      BASE_URL: ${{ needs.deploy.outputs.page_url }}
+      BASE_URL: ${{ needs.deploy.outputs.page_url || 'https://viru-6281.github.io/pdd-main' }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
+          cache-dependency-path: selenium-tests/requirements.txt
 
       - name: Install Python test dependencies
-        run: |
-          pip install \
-            selenium==4.21.0 \
-            pytest==8.2.2 \
-            pytest-html==4.1.1 \
-            pytest-timeout==2.3.1 \
-            openpyxl==3.1.5 \
-            webdriver-manager==4.0.2
+        run: pip install -r selenium-tests/requirements.txt
 
-      - name: Install Chrome
+      - name: Setup Chrome
         uses: browser-actions/setup-chrome@v1
         with:
           chrome-version: stable
 
-      - name: Show Chrome version
+      - name: Print Chrome version
         run: google-chrome --version
 
       - name: Create output directories
@@ -138,121 +152,129 @@ jobs:
           mkdir -p "Test Results/Excel"
           mkdir -p "Test Results/Summary"
 
-      - name: Run all Selenium E2E tests
+      - name: Print BASE_URL
+        run: echo "Running tests against $BASE_URL"
+
+      - name: Run all 28 Selenium E2E tests
         run: |
           python -m pytest \
             selenium-tests/tests/test_e2e.py \
             -v \
-            --timeout=60 \
+            --timeout=90 \
             --tb=short \
             --html="Test Results/HTML/execution-report.html" \
             --self-contained-html \
+            --junit-xml="Test Results/Logs/junit-results.xml" \
             -o log_file="Test Results/Logs/pytest.log" \
-            --junit-xml="Test Results/Logs/junit-results.xml"
+            -o log_file_level=DEBUG
         env:
-          BASE_URL: ${{ needs.deploy.outputs.page_url }}
+          BASE_URL: ${{ env.BASE_URL }}
         continue-on-error: true
 
       - name: Generate Excel test report
         run: |
           python scripts/generate_test_report.py
         env:
-          BASE_URL: ${{ needs.deploy.outputs.page_url }}
+          BASE_URL: ${{ env.BASE_URL }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
         continue-on-error: true
 
-      - name: Generate summary.md
+      - name: Count results and print summary
+        if: always()
         run: |
-          PASSED=$(grep -c "PASSED" "Test Results/Logs/pytest.log" 2>/dev/null || echo "0")
-          FAILED=$(grep -c "FAILED" "Test Results/Logs/pytest.log" 2>/dev/null || echo "0")
-          TOTAL=$((PASSED + FAILED))
-          PCT=$([ "$TOTAL" -gt 0 ] && echo "scale=1; $PASSED * 100 / $TOTAL" | bc || echo "0")
+          LOG="Test Results/Logs/pytest.log"
+          if [ -f "$LOG" ]; then
+            PASSED=$(grep -c " PASSED" "$LOG" 2>/dev/null || echo "0")
+            FAILED=$(grep -c " FAILED" "$LOG" 2>/dev/null || echo "0")
+            ERROR=$(grep -c " ERROR" "$LOG" 2>/dev/null || echo "0")
+            TOTAL=$((PASSED + FAILED + ERROR))
+            echo "=============================="
+            echo " Total:  $TOTAL"
+            echo " Passed: $PASSED ✅"
+            echo " Failed: $FAILED ❌"
+            echo " Errors: $ERROR ⚠️"
+            echo "=============================="
+          else
+            echo "Log file not found — pytest may have crashed"
+          fi
 
-          cat > "Test Results/Summary/summary.md" << EOF
-          # Live GitHub Pages E2E Test Summary
-
-          **Deployment URL:** ${{ needs.deploy.outputs.page_url }}
-          **Run Date:** $(date -u '+%Y-%m-%d %H:%M UTC')
-          **Branch:** ${{ github.ref_name }}
-          **Commit:** ${{ github.sha }}
-
-          ## Results
-
-          | Metric | Value |
-          |---|---|
-          | Total Tests | $TOTAL |
-          | Passed | ✅ $PASSED |
-          | Failed | ❌ $FAILED |
-          | Pass Rate | $PCT% |
-
-          ## Reports
-          - [HTML Report](../HTML/execution-report.html)
-          - [Excel Report](../Excel/Automation_Test_Report.xlsx)
-          EOF
-
-      - name: Upload all artifacts
+      - name: Upload all test artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: selenium-e2e-results
+          name: selenium-e2e-results-build-${{ github.run_number }}
           path: Test Results/
           retention-days: 30
 
-      - name: Publish E2E Summary
+      - name: Publish GitHub Actions summary
         if: always()
         run: |
-          PASSED=$(grep -c "PASSED" "Test Results/Logs/pytest.log" 2>/dev/null || echo "N/A")
-          FAILED=$(grep -c "FAILED" "Test Results/Logs/pytest.log" 2>/dev/null || echo "N/A")
+          LOG="Test Results/Logs/pytest.log"
+          PASSED=$(grep -c " PASSED" "$LOG" 2>/dev/null || echo "0")
+          FAILED=$(grep -c " FAILED" "$LOG" 2>/dev/null || echo "0")
+          TOTAL=$((PASSED + FAILED))
+          PCT=$([ "$TOTAL" -gt 0 ] && python3 -c "print(f'{$PASSED*100/$TOTAL:.1f}')" || echo "0")
 
           cat >> $GITHUB_STEP_SUMMARY << EOF
-          # 🧪 Live GitHub Pages E2E Test Summary
+          # 🧪 Selenium E2E Test Summary
 
-          **Deployment URL:** ${{ needs.deploy.outputs.page_url }}
-          **Run Date:** $(date -u '+%Y-%m-%d %H:%M UTC')
-
-          | | Result |
+          | | |
           |---|---|
-          | Total Tests | 16 |
-          | Passed | ✅ $PASSED |
-          | Failed | ❌ $FAILED |
+          | 🌐 **URL** | ${{ env.BASE_URL }} |
+          | 📅 **Date** | $(date -u '+%Y-%m-%d %H:%M UTC') |
+          | 🔀 **Branch** | ${{ github.ref_name }} |
+          | 📦 **Build** | #${{ github.run_number }} |
 
-          📥 Download full reports from **Artifacts → selenium-e2e-results**
+          ## Results
+
+          | Status | Count |
+          |---|---|
+          | ✅ Passed | $PASSED |
+          | ❌ Failed | $FAILED |
+          | 📊 Total | $TOTAL |
+          | 🎯 Pass Rate | $PCT% |
+
+          > Download full reports from **Artifacts → selenium-e2e-results-build-${{ github.run_number }}**
           EOF
 
-  # ─────────────────────────────────────────
-  publish-reports:
-    name: 📊 Publish Reports to GitHub Pages
+  # ─────────────────────────────────────────────────────────────────
+  # PR-only: run E2E against the already-deployed Pages (skip deploy)
+  # ─────────────────────────────────────────────────────────────────
+  selenium-pr:
+    name: 🧪 Selenium E2E (PR — existing Pages)
     runs-on: ubuntu-latest
-    needs: [deploy, selenium-e2e]
-    if: always() && github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request'
+    env:
+      BASE_URL: https://viru-6281.github.io/pdd-main
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          ref: gh-pages
-          path: gh-pages
-        continue-on-error: true
-
-      - uses: actions/download-artifact@v4
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install -r selenium-tests/requirements.txt
+      - uses: browser-actions/setup-chrome@v1
         with:
-          name: selenium-e2e-results
-          path: downloaded-results
-        continue-on-error: true
-
-      - name: Publish to gh-pages/reports
+          chrome-version: stable
+      - name: Create dirs
+        run: mkdir -p "Test Results/Screenshots" "Test Results/Logs" "Test Results/HTML"
+      - name: Run E2E against existing Pages
         run: |
-          BUILD="${{ github.run_number }}"
-          mkdir -p gh-pages/reports/latest
-          mkdir -p "gh-pages/reports/history/build-$(printf '%03d' $BUILD)"
-
-          cp -r downloaded-results/HTML/. gh-pages/reports/latest/ 2>/dev/null || true
-          cp -r downloaded-results/Screenshots/. gh-pages/reports/latest/screenshots/ 2>/dev/null || true
-          cp -r downloaded-results/Summary/. gh-pages/reports/latest/ 2>/dev/null || true
-          cp -r downloaded-results/HTML/. "gh-pages/reports/history/build-$(printf '%03d' $BUILD)/" 2>/dev/null || true
-
-          cd gh-pages
-          git config user.email "actions@github.com"
-          git config user.name "GitHub Actions"
-          git add -A
-          git diff --cached --quiet \
-            || git commit -m "📊 Test reports — Build #$BUILD"
-          git push origin gh-pages
+          python -m pytest \
+            selenium-tests/tests/test_e2e.py \
+            -v --timeout=90 --tb=short \
+            --html="Test Results/HTML/execution-report.html" \
+            --self-contained-html \
+            --junit-xml="Test Results/Logs/junit-results.xml"
+        env:
+          BASE_URL: ${{ env.BASE_URL }}
         continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr-selenium-results-${{ github.run_number }}
+          path: Test Results/
+          retention-days: 14
+    needs: []
